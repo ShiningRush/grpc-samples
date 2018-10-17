@@ -21,6 +21,7 @@ const (
 func main() {
 	os.Setenv("CONSUL_ADDR", "192.168.8.6:8500")
 	consul.InitAndRegister()
+
 	// Set up a connection to the server.
 	conn, err := grpc.Dial("consul:///followme-srv-user", grpc.WithInsecure(), grpc.WithBalancerName(roundrobin.Name))
 	if err != nil {

@@ -2,7 +2,8 @@ package log
 
 import (
 	"context"
-	"github.com/shiningrush/grpc-samples/pkg/log/access"
+
+	"gitlab.followme.com/FollowmeGo/golib/log/access"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
@@ -12,6 +13,7 @@ import (
 
 type accessLogOption struct {
 	enableReqAndResp bool
+	ignoreMethod     []string
 }
 
 type setOption func(*accessLogOption)
@@ -19,6 +21,12 @@ type setOption func(*accessLogOption)
 func SetLogReqAndResp(v bool) setOption {
 	return func(o *accessLogOption) {
 		o.enableReqAndResp = v
+	}
+}
+
+func SetIgnoreMethod(v string) setOption {
+	return func(o *accessLogOption) {
+		o.ignoreMethod = append(o.ignoreMethod, v)
 	}
 }
 
@@ -48,6 +56,12 @@ func AccessLog(setOpts ...setOption) grpc.UnaryServerInterceptor {
 			// will not log gRPC calls if it was a call to healthcheck and no error was raised
 			if fullMethodName == "/grpc.health.v1.Health/Check" {
 				return false
+			}
+
+			for _, v := range opts.ignoreMethod {
+				if fullMethodName == v {
+					return false
+				}
 			}
 
 			return true

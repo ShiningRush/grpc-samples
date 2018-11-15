@@ -4,22 +4,43 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shiningrush/grpc-samples/pkg/grpc/utils"
 	"github.com/spf13/viper"
+	"gitlab.followme.com/FollowmeGo/golib/grpc/utils"
 )
 
-func init() {
-	initBaseConfig()
+type configOption struct {
+	dir  string
+	name string
+}
+
+type OptAction func(*configOption)
+
+func InitConfig(opts ...OptAction) {
+	opt := initOpts(opts)
+
+	initBaseConfig(opt)
 	mergeEnvConfig(utils.GetEnvOrDefault("RUN_ENV", "development"))
 }
 
-func initBaseConfig() {
-	viper.AddConfigPath("./configs") // optionally look for config in the working directory
-	viper.SetConfigName("config")
+func initOpts(opts []OptAction) *configOption {
+	opt := &configOption{
+		dir:  "./configs",
+		name: "config",
+	}
+
+	for _, v := range opts {
+		v(opt)
+	}
+
+	return opt
+}
+
+func initBaseConfig(opt *configOption) {
+	viper.AddConfigPath(opt.dir) // optionally look for config in the working directory
+	viper.SetConfigName(opt.name)
 	if err := viper.ReadInConfig(); err != nil {
 		panic(fmt.Errorf("Fatal error config file: %s \n", err))
 	}
-
 }
 
 func mergeEnvConfig(env string) {
@@ -63,4 +84,8 @@ func Set(key string, value interface{}) {
 
 func IsSet(key string) bool {
 	return viper.IsSet(key)
+}
+
+func GetViper() *viper.Viper {
+	return viper.GetViper()
 }

@@ -6,11 +6,13 @@ import (
 	"log"
 	"net"
 
-	"github.com/shiningrush/grpc-samples/pkg/grpc/consul"
+	"gitlab.followme.com/FollowmeGo/golib/grpc/consul"
+	"gitlab.followme.com/FollowmeGo/golib/utils/network"
 
-	"github.com/shiningrush/grpc-samples/pkg/grpc/utils"
+	"gitlab.followme.com/FollowmeGo/golib/grpc/utils"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
@@ -18,16 +20,15 @@ import (
 var (
 	consulAddr string
 	serverAddr string
-	serverName string
 )
 
 func initParams() {
 	consulAddr = utils.GetEnvOrDefault("CONSUL_ADDR", "127.0.0.1:8500")
 	serverAddr = utils.GetEnvOrDefault("SERVER_ADDR", "")
-	serverName = utils.GetEnvOrDefault("SERVER_NAME", "Grpc-Sample-Service")
 }
 
 type grpcServerOption struct {
+	name     string
 	grpcOpts []grpc.ServerOption
 	srvSet   SetService
 }
@@ -37,9 +38,9 @@ type SetService func(srv *grpc.Server)
 
 func Serve(opts ...SetOption) error {
 	initParams()
-	srvOpt := initOpts(opts, &grpcServerOption{})
+	srvOpt := initOpts(opts, &grpcServerOption{name: "Grpc-sample-srv"})
 	if serverAddr == "" {
-		serverAddr = getOutboundIP()
+		serverAddr = network.GetOutboundIP()
 	}
 
 	ip, _, err := net.SplitHostPort(serverAddr)
@@ -59,11 +60,11 @@ func Serve(opts ...SetOption) error {
 	}
 
 	port := lis.Addr().(*net.TCPAddr).Port
-	consul.RegisterToConsul(consulAddr, fmt.Sprintf("%v:%v", ip, port), serverName)
+	consul.RegisterToConsul(consulAddr, fmt.Sprintf("%v:%v", ip, port), srvOpt.name)
 
 	log.Println(fmt.Sprintf("server is listen on : %v:%v", ip, port))
 	defer func() {
-		consul.DeregisterFromConsul(consulAddr, fmt.Sprintf("%v:%v", ip, port), serverName)
+		consul.DeregisterFromConsul(consulAddr, fmt.Sprintf("%v:%v", ip, port), srvOpt.name)
 	}()
 	return s.Serve(lis)
 }
@@ -76,15 +77,13 @@ func initOpts(opts []SetOption, srvOpt *grpcServerOption) *grpcServerOption {
 	return srvOpt
 }
 
-func getOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+func Dial(srvName string) *grpc.ClientConn {
+	consul.InitAndRegister()
+
+	conn, err := grpc.Dial("consul:///"+srvName, grpc.WithInsecure(), grpc.WithBalancerName(roundrobin.Name))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Dial srv: %v failed : %v", srvName, err.Error())
 	}
-	defer conn.Close()
 
-	localAddr := conn.LocalAddr().String()
-	host, _, _ := net.SplitHostPort(localAddr)
-
-	return host + ":0"
+	return conn
 }

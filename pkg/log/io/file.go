@@ -1,6 +1,7 @@
 package io
 
 import (
+	"log"
 	"os"
 	"path"
 	"strconv"
@@ -28,6 +29,12 @@ func (h *DailyFileHandler) SetName(name string) *DailyFileHandler {
 }
 
 func (h *DailyFileHandler) SetDirectory(dir string) *DailyFileHandler {
+	if _, err := os.Stat(dir); os.IsNotExist(err) || err != nil {
+		if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+			log.Fatal("grpc.log : make directory failed : " + err.Error())
+		}
+	}
+
 	h.dir = dir
 	return h
 }

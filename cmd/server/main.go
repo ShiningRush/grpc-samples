@@ -26,6 +26,7 @@ func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloRe
 
 func main() {
 	log.Println("Test config : " + config.GetString("Test2"))
+	config.InitConfig()
 
 	opts := []grpc.ServerOption{
 		grpc_middleware.WithUnaryServerChain(

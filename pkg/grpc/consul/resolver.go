@@ -2,10 +2,12 @@ package consul
 
 import (
 	"context"
-	"github.com/shiningrush/grpc-samples/pkg/grpc/utils"
 	"fmt"
 	"log"
+	"sync"
 	"time"
+
+	"gitlab.followme.com/FollowmeGo/golib/grpc/utils"
 
 	consulapi "github.com/hashicorp/consul/api"
 	"google.golang.org/grpc/resolver"
@@ -13,6 +15,8 @@ import (
 
 var (
 	consulAddr string
+	inited     bool
+	mux        sync.Mutex
 )
 
 type consulBuilder struct {
@@ -21,9 +25,18 @@ type consulBuilder struct {
 }
 
 func InitAndRegister() {
-	consulAddr = utils.GetEnvOrDefault("CONSUL_ADDR", "127.0.0.1:8500")
-	builder := NewConsulBuilder(consulAddr)
-	resolver.Register(builder)
+	if inited {
+		return
+	}
+
+	mux.Lock()
+	if !inited {
+		consulAddr = utils.GetEnvOrDefault("CONSUL_ADDR", "127.0.0.1:8500")
+		builder := NewConsulBuilder(consulAddr)
+		resolver.Register(builder)
+		inited = true
+	}
+	mux.Unlock()
 }
 
 func NewConsulBuilder(address string) resolver.Builder {
@@ -39,17 +52,61 @@ func NewConsulBuilder(address string) resolver.Builder {
 }
 
 func (cb *consulBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOption) (resolver.Resolver, error) {
-	cb.serviceName = target.Endpoint
-
-	consulResolver := NewConsulResolver(&cc, cb, opts)
+	consulResolver := NewConsulResolver(&cc, target.Endpoint, opts, cb.client)
+	consulResolver.wg.Add(1)
 	go consulResolver.watcher()
 
 	return consulResolver, nil
 }
 
-func (cb consulBuilder) resolve() ([]resolver.Address, error) {
+func (cb *consulBuilder) Scheme() string {
+	return "consul"
+}
 
-	serviceEntries, _, err := cb.client.Health().Service(cb.serviceName, "", true, &consulapi.QueryOptions{})
+type consulResolver struct {
+	consulClient *consulapi.Client
+	clientConn   *resolver.ClientConn
+	service      string
+	t            *time.Timer
+	rn           chan bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+}
+
+func NewConsulResolver(cc *resolver.ClientConn, service string, opts resolver.BuildOption, consulClient *consulapi.Client) *consulResolver {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &consulResolver{
+		consulClient: consulClient,
+		clientConn:   cc,
+		service:      service,
+		t:            time.NewTimer(time.Second * 15), // fresh frequency
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+}
+
+func (cr *consulResolver) watcher() {
+	defer cr.wg.Done()
+	for {
+		select {
+		case <-cr.ctx.Done():
+			return
+		case <-cr.rn:
+		case <-cr.t.C:
+			cr.t.Reset(time.Second * 15)
+		}
+		adds, err := cr.resolve()
+		if err != nil {
+			log.Fatal("grpc: query service entries error:", err.Error())
+		}
+		(*cr.clientConn).NewAddress(adds)
+		(*cr.clientConn).NewServiceConfig("")
+	}
+}
+
+func (cr *consulResolver) resolve() ([]resolver.Address, error) {
+	serviceEntries, _, err := cr.consulClient.Health().Service(cr.service, "", true, &consulapi.QueryOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -62,51 +119,6 @@ func (cb consulBuilder) resolve() ([]resolver.Address, error) {
 	return adds, nil
 }
 
-func (cb *consulBuilder) Scheme() string {
-	return "consul"
-}
-
-type consulResolver struct {
-	clientConn    *resolver.ClientConn
-	consulBuilder *consulBuilder
-	t             *time.Timer
-	rn            chan bool
-	ctx           context.Context
-	cancel        context.CancelFunc
-}
-
-func NewConsulResolver(cc *resolver.ClientConn, cb *consulBuilder, opts resolver.BuildOption) *consulResolver {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &consulResolver{
-		clientConn:    cc,
-		consulBuilder: cb,
-		t:             time.NewTimer(0),
-		ctx:           ctx,
-		cancel:        cancel,
-	}
-}
-
-func (cr *consulResolver) watcher() {
-	for {
-		select {
-		case <-cr.ctx.Done():
-			return
-		case <-cr.rn:
-		case <-cr.t.C:
-		}
-		adds, err := cr.consulBuilder.resolve()
-		if err != nil {
-			log.Fatal("grpc: query service entries error:", err.Error())
-		}
-		(*cr.clientConn).NewAddress(adds)
-		(*cr.clientConn).NewServiceConfig("")
-	}
-}
-
-func (cr *consulResolver) Scheme() string {
-	return cr.consulBuilder.Scheme()
-}
-
 func (cr *consulResolver) ResolveNow(rno resolver.ResolveNowOption) {
 	select {
 	case cr.rn <- true:
@@ -116,5 +128,6 @@ func (cr *consulResolver) ResolveNow(rno resolver.ResolveNowOption) {
 
 func (cr *consulResolver) Close() {
 	cr.cancel()
+	cr.wg.Wait()
 	cr.t.Stop()
 }

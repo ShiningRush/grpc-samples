@@ -26,7 +26,7 @@ func RegisterToConsul(consulAddr string, srvAddr string, srvName string) {
 	registration := &consulapi.AgentServiceRegistration{
 		Name:    srvName,
 		ID:      fmt.Sprintf("%v:%v", srvName, srvAddr),
-		Tags:    []string{srvName},
+		Tags:    []string{"v-" + srvName},
 		Address: host,
 		Port:    iPort,
 		Check: &consulapi.AgentServiceCheck{
